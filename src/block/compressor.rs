@@ -1,9 +1,9 @@
 use crate::block::{MIN_MATCHLENGTH, TOKEN_UPPERBOUND};
 
 // 64kB as to fit into offset bytes
-static WINDOW_SIZE: usize = 64 * 1024;
-static LAST_SEQUENCE_LENGTH: usize = 5;
-static PENULTIMATE_SEQUENCE_LENGTH: usize = 12;
+const WINDOW_SIZE: usize = 64 * 1024;
+const LAST_SEQUENCE_LENGTH: usize = 5;
+const PENULTIMATE_SEQUENCE_LENGTH: usize = 12;
 
 struct Sequence {
     // right now we're just moving the literals
@@ -50,7 +50,6 @@ impl Sequence {
                         *out_i += 1;
                     });
             }
-
         }
     }
 }
@@ -103,6 +102,7 @@ fn hash_4(sequence: u32) -> u32 {
     (sequence.wrapping_mul(2654435761u32)) >> 16
 }
 
+// we could try something with read_exact
 pub fn compress_block(block: &[u8], out: &mut [u8]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;

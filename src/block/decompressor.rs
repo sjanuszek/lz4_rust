@@ -10,7 +10,10 @@ fn parse_token(token: u8) -> (usize, usize) {
 // TODO
 // - check that the block ends correctly
 // - properly handle offset zero
-pub fn decompress_block(block: &[u8], out: &mut [u8]) {
+// - we could try something with read_exact
+
+// temporary return how many written
+pub fn decompress_block(block: &[u8], out: &mut [u8]) -> usize{
     let mut block_pos = 0;
     let mut out_pos = 0;
 
@@ -81,6 +84,8 @@ pub fn decompress_block(block: &[u8], out: &mut [u8]) {
         // move to the next byte after token
         block_pos += 1;
     }
+
+    out_pos
 }
 
 #[cfg(test)]
