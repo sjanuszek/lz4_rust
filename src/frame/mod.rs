@@ -11,6 +11,7 @@ pub use compressor::compress_frame;
 pub use header::FrameHeader;
 pub use header::MaximumSize;
 
+#[derive(Debug)]
 pub enum Error {
     WrongMagicNumber,
     WrongVersion(u8),
@@ -24,6 +25,7 @@ pub enum Error {
     WrongBlockSize{expected: usize, gotten: usize},
     UnsupportedDictionaryId,
     UnsupportedBlockDependance,
+    BlockDecompressorError(crate::block::Error)
 }
 
 impl From<std::io::Error> for Error {

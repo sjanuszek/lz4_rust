@@ -1,4 +1,4 @@
-use crate::block::{MIN_MATCHLENGTH, TOKEN_UPPERBOUND};
+use crate::block::{Error, MIN_MATCHLENGTH, TOKEN_UPPERBOUND};
 
 fn parse_token(token: u8) -> (usize, usize) {
     let length = (token >> 4) as usize;
@@ -7,10 +7,7 @@ fn parse_token(token: u8) -> (usize, usize) {
     (length, matchlength + 4)
 }
 
-// TODO
-// - properly handle offset zero
-
-pub fn decompress_block(block: &[u8], out: &mut [u8]) -> usize{
+pub fn decompress_block(block: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     let mut block_pos = 0;
     let mut out_pos = 0;
 
@@ -49,7 +46,7 @@ pub fn decompress_block(block: &[u8], out: &mut [u8]) -> usize{
         let offset = u16::from_le_bytes([block[block_pos], block[block_pos + 1]]);
 
         if offset == 0 {
-            panic!("OFFSET 0");
+            return Err(Error::OffsetZero);
         }
 
         block_pos += 2;
@@ -82,7 +79,7 @@ pub fn decompress_block(block: &[u8], out: &mut [u8]) -> usize{
         block_pos += 1;
     }
 
-    out_pos
+    Ok(out_pos)
 }
 
 #[cfg(test)]
@@ -95,7 +92,7 @@ mod tests {
         let expected = "ABCD";
 
         let mut buf = vec![0u8; 4];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -106,7 +103,7 @@ mod tests {
         let expected = "AABBAABB";
 
         let mut buf = vec![0u8; 8];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -117,7 +114,7 @@ mod tests {
         let expected = "AAAAAAAAAA";
 
         let mut buf = vec![0u8; 10];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -136,7 +133,7 @@ mod tests {
         let expected = "AAAAAAAAAAAAAAAAAAAAAAAA";
 
         let mut buf = vec![0u8; 24];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -147,7 +144,7 @@ mod tests {
         let expected = "ABCABCABC";
 
         let mut buf = vec![0u8; 9];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -158,7 +155,7 @@ mod tests {
         let expected = "AAAAABBBBB";
 
         let mut buf = vec![0u8; 10];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }
@@ -180,7 +177,7 @@ mod tests {
         let expected = "ABCDABCDEFABCDABCDGHIJKLM";
 
         let mut buf = vec![0u8; 25];
-        decompress_block(&block, &mut buf);
+        let _ = decompress_block(&block, &mut buf);
 
         assert_eq!(expected, str::from_utf8(&buf).unwrap().to_string());
     }

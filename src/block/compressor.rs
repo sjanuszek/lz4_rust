@@ -165,7 +165,7 @@ mod tests {
     fn round_trip(input: &[u8]) {
         let compressed = compress_block_to_vec(input);
         let mut decompressed = vec![0u8; input.len()];
-        decompress_block(&compressed, &mut decompressed);
+        let _ = decompress_block(&compressed, &mut decompressed);
         assert_eq!(input, decompressed.as_slice());
     }
 

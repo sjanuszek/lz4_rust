@@ -55,9 +55,10 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
             out.write_all(&block)?;
         } else {
             let mut data_buf = vec![0u8; header.maximum_size.get_bytes()];
-            let written = decompress_block(&block, &mut data_buf);
-
-            data_buf.truncate(written);
+            match decompress_block(&block, &mut data_buf) {
+                Ok(written) => data_buf.truncate(written),
+                Err(e) => return Err(Error::BlockDecompressorError(e))
+            }
 
             if header.content_checksum {
                 hasher.write(&data_buf);

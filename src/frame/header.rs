@@ -159,7 +159,7 @@ impl FrameHeader {
             5 => MaximumSize::KB256,
             6 => MaximumSize::MB1,
             7 => MaximumSize::MB4,
-            _ => panic!("NO IDEA WHAT HAPPENED HERE")
+            _ => unreachable!()
         };
 
         let mut to_hash = vec![flg, bd];
