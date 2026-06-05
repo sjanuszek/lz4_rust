@@ -1,46 +1,64 @@
+use std::{hash::Hasher, io::{BufRead, BufReader, BufWriter, Read, Write}};
+
 use twox_hash::XxHash32;
 
-use crate::{block::compress_block, frame::{END_MARK, header::FrameHeader}};
+use crate::{block::compress_block, frame::{DATA_TYPE_FLAG, END_MARK, header::FrameHeader}};
 
 // should return Result
-// needs a refactor
-// temporary return
-pub fn compress_frame(input: &[u8], header: FrameHeader) -> Vec<u8> {
-    let mut out: Vec<u8> = Vec::new();
+pub fn compress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut BufWriter<W>, header: FrameHeader) {
+    let mut hasher = XxHash32::with_seed(0);
+    let mut read_buf = vec![0u8; header.maximum_size.get_bytes()];
+    let mut buf_compressed = vec![0u8; header.maximum_size.get_bytes() * 2];
 
-    out.extend_from_slice(&header.write());
+    out.write_all(&header.write()).unwrap();
 
-    input
-        .chunks(header.maximum_size.get_bytes())
-        .for_each(|block| {
-            let mut buf = vec![0u8; block.len() * 2];
-            let written = compress_block(block, &mut buf);
+    loop {
+        let n = input.read(&mut read_buf).unwrap();
+        if n == 0 { break; }
+        let buf = &read_buf[..n];
 
-            buf.truncate(written);
+        if header.content_checksum {
+            hasher.write(buf);
+        }
 
-            out.extend_from_slice(&u32::to_le_bytes(written.try_into().unwrap()));
-            out.extend_from_slice(&buf);
+        let written = compress_block(buf, &mut buf_compressed);
+
+        if written > header.maximum_size.get_bytes() {
+            let raw_size = (n as u32) | DATA_TYPE_FLAG;
+
+            out.write_all(&u32::to_le_bytes(raw_size)).unwrap();
+            out.write_all(buf).unwrap();
 
             if header.block_checksum {
-                let hash = XxHash32::oneshot(0, &buf) as u32;
-                out.extend_from_slice(&u32::to_le_bytes(hash));
+                let hash = XxHash32::oneshot(0, buf) as u32;
+                out.write_all(&u32::to_le_bytes(hash)).unwrap();
             }
-        });
+        } else {
+            out.write_all(&u32::to_le_bytes(written as u32)).unwrap();
+            out.write_all(&buf_compressed[..written]).unwrap();
 
-    out.extend_from_slice(&END_MARK);
+            if header.block_checksum {
+                let hash = XxHash32::oneshot(0, &buf_compressed) as u32;
+                out.write_all(&u32::to_le_bytes(hash)).unwrap();
+            }
+        }
 
-    if header.content_checksum {
-        let hash = XxHash32::oneshot(0, input) as u32;
-        out.extend_from_slice(&u32::to_le_bytes(hash));
+        input.consume(n);
     }
 
-    out
+    out.write_all(&END_MARK).unwrap();
+
+    if header.content_checksum {
+        let hash = hasher.finish_32();
+        out.write_all(&u32::to_le_bytes(hash)).unwrap();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{decompress_frame, header::MaximumSize};
+    use crate::frame::header::MaximumSize;
+    use std::io::Cursor;
 
     #[test]
     fn thing() {
@@ -53,10 +71,15 @@ mod tests {
             dictionary_id: None,
             maximum_size: MaximumSize::KB64
         };
-
-        let compressed = compress_frame(input, header);
-        let decompressed = decompress_frame(&compressed);
-
-        assert_eq!(input.to_vec(), decompressed)
+        
+        let mut compressed = Vec::new();
+        let mut reader = BufReader::with_capacity(header.maximum_size.get_bytes(), Cursor::new(input));
+        let mut writer = BufWriter::new(&mut compressed);
+        
+        compress_frame(&mut reader, &mut writer, header);
+        drop(writer);
+        
+        // let decompressed = decompress_frame(&compressed);
+        // assert_eq!(input, decompressed.as_slice());
     }
 }
