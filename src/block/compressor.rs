@@ -5,122 +5,48 @@ const WINDOW_SIZE: usize = 64 * 1024;
 const LAST_SEQUENCE_LENGTH: usize = 5;
 const PENULTIMATE_SEQUENCE_LENGTH: usize = 12;
 
-struct Sequence {
-    // right now we're just moving the literals
-    // but could be a lifetime
-    literals: Vec<u8>,
-    matchlength: Option<usize>,
-    offset: Option<u16>
-}
-
-impl Sequence {
-    fn write_to_output(&self, out: &mut [u8], out_i: &mut usize) {
-        let (token, extra_literals, extra_matchlength) = build_token(self.literals.len(), self.matchlength);
-        out[*out_i] = token;
-        *out_i += 1;
-
-        if let Some(extra_literals) = extra_literals {
-            extra_literals
-                .iter()
-                .for_each(|val| {
-                    out[*out_i] = *val;
-                    *out_i += 1;
-                });
-        }
-
-        self.literals
-            .iter()
-            .for_each(|val| {
-                out[*out_i] = *val;
-                *out_i += 1;
-            });
-
-        if let Some(offset) = self.offset {
-            let [low, high] = offset.to_le_bytes();
-
-            out[*out_i] = low;
-            out[*out_i + 1] = high;
-            *out_i += 2;
-
-            if let Some(extra_matchlength) = extra_matchlength{
-                extra_matchlength
-                    .iter()
-                    .for_each(|val| {
-                        out[*out_i] = *val;
-                        *out_i += 1;
-                    });
-            }
-        }
-    }
-}
-
-// needs a refactor, probably should write directly into a buffer
-fn build_token(literal_count: usize, matchlength: Option<usize>) -> (u8, Option<Vec<u8>>, Option<Vec<u8>>) {
-    let mut extra_literals_res: Option<Vec<u8>> = None;
-    let mut extra_matchlength_res: Option<Vec<u8>> = None;
-
-    let lit_nibble: u8;
-    let mat_nibble: u8;
-
-    if literal_count >= TOKEN_UPPERBOUND{
-        lit_nibble = TOKEN_UPPERBOUND as u8;
-
-        let num_full_groups = (literal_count - TOKEN_UPPERBOUND) / 255;
-        let mut extra_literals = vec![255; num_full_groups];
-        let remainder = (literal_count - TOKEN_UPPERBOUND) - (num_full_groups * 255);
-
-        extra_literals.push(remainder as u8);
-        extra_literals_res = Some(extra_literals);
-    } else {
-        lit_nibble = literal_count as u8;
-    }
-
-    match matchlength {
-        None => mat_nibble = 0,
-        Some(ml) => {
-            if ml - MIN_MATCHLENGTH >= TOKEN_UPPERBOUND {
-                mat_nibble = TOKEN_UPPERBOUND as u8;
-
-                let num_full_groups = (ml - MIN_MATCHLENGTH - TOKEN_UPPERBOUND) / 255;
-                let mut extra_matchlength = vec![255; num_full_groups];
-                let remainder = (ml - MIN_MATCHLENGTH - TOKEN_UPPERBOUND) - (num_full_groups * 255);
-
-                extra_matchlength.push(remainder as u8);
-                extra_matchlength_res = Some(extra_matchlength);
-            } else {
-                mat_nibble = (ml - MIN_MATCHLENGTH) as u8;
-            }
-        }
-    }
-
-    let token = (lit_nibble << 4) | (mat_nibble);
-
-    (token, extra_literals_res, extra_matchlength_res)
+struct SequenceMeta {
+    start_pos: usize,
+    literals_count: usize,
+    matchlength: usize,
+    offset: u16
 }
 
 fn hash_4(sequence: u32) -> u32 {
     (sequence.wrapping_mul(2654435761u32)) >> 16
 }
 
-// we could try something with read_exact
+fn write_extra(mut extra: usize, out: &mut [u8], out_i: &mut usize) {
+    while extra >= 255 {
+        out[*out_i] = 255;
+        *out_i += 1;
+        extra -= 255
+    } 
+
+    out[*out_i] = extra as u8;
+    *out_i += 1;
+}
+
 pub fn compress_block(block: &[u8], out: &mut [u8]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;
 
-    let mut table: Vec<usize> = vec![0; WINDOW_SIZE];
-    let mut buf: Vec<u8> = Vec::new();
+    let mut table = [0u32; WINDOW_SIZE];
+    let mut sequences: Vec<SequenceMeta> = Vec::with_capacity(block.len() / MIN_MATCHLENGTH);
+    let mut lit_start_pos: usize = 0;
 
+    // create small sequence meta structs instead of holding a buffor of literals
     // ensure we meet the end of block conditions
     while i < block.len().saturating_sub(PENULTIMATE_SEQUENCE_LENGTH) {
         let byte_sequence = u32::from_le_bytes(block[i..i+MIN_MATCHLENGTH].try_into().unwrap());
         let hash = hash_4(byte_sequence) as usize;
-        let j = table[hash];
+        let j = table[hash] as usize;
 
         let is_valid_match = j < i
             && i - j < WINDOW_SIZE
             && block[i..i+MIN_MATCHLENGTH] == block[j..j+MIN_MATCHLENGTH];
 
-        table[hash] = i;
+        table[hash] = i as u32;
 
         if is_valid_match {
             let mut matchlength = MIN_MATCHLENGTH;
@@ -130,22 +56,61 @@ pub fn compress_block(block: &[u8], out: &mut [u8]) -> usize {
             }
 
             let offset: u16 = (i - j).try_into().unwrap();
-            let match_sequence = Sequence{literals: std::mem::take(&mut buf), matchlength: Some(matchlength), offset: Some(offset)};
-            match_sequence.write_to_output(out, &mut out_i);
+            sequences.push(SequenceMeta {
+                start_pos: lit_start_pos,
+                literals_count: i - lit_start_pos,
+                offset,
+                matchlength
+            });
 
             i += matchlength;
-            buf = Vec::new()
+            lit_start_pos = i;
         } else {
-            buf.push(block[i]);
             i += 1;
         }
-        
     }
 
     // last sequence is pure literals
-    buf.extend_from_slice(&block[i..]);
-    let block_sequence = Sequence {literals: buf.to_vec(), matchlength: None, offset: None};
-    block_sequence.write_to_output(out, &mut out_i);
+    sequences.push(SequenceMeta {
+        start_pos: lit_start_pos,
+        literals_count: block.len() - lit_start_pos,
+        offset: 0,
+        matchlength: 0
+    });
+    
+    // write sequences directly into out
+    for sequence in sequences {
+        let is_last = sequence.offset == 0;
+
+        let lit_nibble = sequence.literals_count.min(TOKEN_UPPERBOUND) as u8;
+        let mat_nibble = if is_last {
+            0u8
+        } else {
+            (sequence.matchlength - MIN_MATCHLENGTH).min(TOKEN_UPPERBOUND) as u8
+        };
+
+        out[out_i] = (lit_nibble << 4) | (mat_nibble);
+        out_i += 1;
+
+        if sequence.literals_count >= TOKEN_UPPERBOUND {
+            write_extra(sequence.literals_count - TOKEN_UPPERBOUND, out, &mut out_i);
+        }
+
+        out[out_i..out_i + sequence.literals_count].copy_from_slice(&block[sequence.start_pos..sequence.start_pos + sequence.literals_count]);
+        out_i += sequence.literals_count;
+
+        if is_last { break; }
+
+        let [low, high] = sequence.offset.to_le_bytes();
+
+        out[out_i] = low;
+        out[out_i + 1] = high;
+        out_i += 2;
+
+        if sequence.matchlength - MIN_MATCHLENGTH >= TOKEN_UPPERBOUND {
+            write_extra(sequence.matchlength - MIN_MATCHLENGTH - TOKEN_UPPERBOUND, out, &mut out_i);
+        }
+    }
 
     out_i
 }
