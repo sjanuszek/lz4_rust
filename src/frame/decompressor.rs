@@ -2,19 +2,25 @@ use std::{hash::Hasher, io::{BufReader, BufWriter, Read, Write}};
 
 use twox_hash::XxHash32;
 
-use crate::{block::decompress_block, frame::{DATA_TYPE_FLAG, END_MARK, header::FrameHeader}};
+use crate::{block::decompress_block, frame::{DATA_TYPE_FLAG, END_MARK, Error, header::FrameHeader}};
 
 static BLOCK_SIZE_FLAG: u32 = 0x7FFFFFFF;
 
 // still need to handle block dependancy
-pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut BufWriter<W>) {
-    let header = FrameHeader::read(input);
+pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut BufWriter<W>) -> Result<(), Error> {
+    let header = FrameHeader::read(input)?;
+
+    if let Some(_) = header.dictionary_id {
+        return Err(Error::UnsupportedDictionaryId);
+    } else if !header.block_independance {
+        return Err(Error::UnsupportedBlockDependance);
+    }
 
     let mut hasher = XxHash32::with_seed(0);
 
     loop {
         let mut raw_size_buf = [0u8; 4];
-        input.read_exact(&mut raw_size_buf).unwrap();
+        input.read_exact(&mut raw_size_buf)?;
         
         if raw_size_buf == END_MARK { break; }
 
@@ -23,22 +29,22 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
         let block_size = (raw_size & BLOCK_SIZE_FLAG) as usize;
 
         if block_size > header.maximum_size.get_bytes() {
-            panic!("SOMETHING IS FUCKY WUCKY")
+            return Err(Error::WrongBlockSize { expected: header.maximum_size.get_bytes(), gotten: block_size });
         }
 
         let mut block = vec![0u8; block_size];
-        input.read_exact(&mut block).unwrap();
+        input.read_exact(&mut block)?;
 
         if header.block_checksum {
             let mut block_checksum_buf = [0u8; 4];
-            input.read_exact(&mut block_checksum_buf).unwrap();
+            input.read_exact(&mut block_checksum_buf)?;
 
             let block_checksum = u32::from_le_bytes(block_checksum_buf);
 
             let hash = XxHash32::oneshot(0, &block) as u32;
 
             if block_checksum != hash {
-                panic!("INCORRECT BLOCK CHECKSUM")
+                return Err(Error::WrongBlockChecksum);
             }
         }
 
@@ -46,7 +52,7 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
             if header.content_checksum {
                 hasher.write(&block);
             }
-            out.write_all(&block).unwrap();
+            out.write_all(&block)?;
         } else {
             let mut data_buf = vec![0u8; header.maximum_size.get_bytes()];
             let written = decompress_block(&block, &mut data_buf);
@@ -56,22 +62,24 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
             if header.content_checksum {
                 hasher.write(&data_buf);
             }
-            out.write_all(&data_buf).unwrap();
+            out.write_all(&data_buf)?;
         }
     }
 
     if header.content_checksum {
         let mut content_checksum_buf = [0u8; 4];
-        input.read_exact(&mut content_checksum_buf).unwrap();
+        input.read_exact(&mut content_checksum_buf)?;
 
         let content_checksum = u32::from_le_bytes(content_checksum_buf);
 
         let hash = hasher.finish_32();
 
         if content_checksum != hash {
-            panic!("INCORRECT CONTENT CHECKSUM")
+            return Err(Error::WrongContentChecksum);
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -84,7 +92,7 @@ mod tests {
         let mut reader = BufReader::new(Cursor::new(input));
         let mut out = Vec::new();
         let mut writer = BufWriter::new(&mut out);
-        decompress_frame(&mut reader, &mut writer);
+        let _ = decompress_frame(&mut reader, &mut writer);
         drop(writer);
         out
     }

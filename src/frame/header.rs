@@ -1,10 +1,10 @@
-use std::{hash::Hasher, io::Read};
+use std::{io::{BufReader, Read}};
 
 use twox_hash::XxHash32;
 
-const MAGIC_NUMBER: u32 = 0x184D2204;
+use crate::frame::Error;
 
-const HEADER_MIN_LENGTH: usize = 4 + 3;
+const MAGIC_NUMBER: u32 = 0x184D2204;
 
 const VERSION_MASK: u8 = 0b11000000;
 const SUPPORTED_VERSION_MASK: u8 = 0b01000000;
@@ -24,7 +24,7 @@ const MINIMAL_FLAG: u8 = 0b01000000;
 const SET_INDEPENDANCE: u8 = 0b00100000;
 const SET_BLOCK_CHECKSUM: u8 = 0b00010000;
 const SET_CONTENT_SIZE: u8 = 0b00001000;
-const SET_CONTENT_CHECKSUM: u8 = 0b000000100;
+const SET_CONTENT_CHECKSUM: u8 = 0b00000100;
 const SET_DICTIONARY_ID: u8 = 0b00000001;
 
 const MINIMAL_BD: u8 = 0b00000000;
@@ -69,20 +69,6 @@ pub struct FrameHeader {
 // all unwraps need to be replaced with ?
 // should return errors, change all panics
 impl FrameHeader {
-    pub fn get_length(&self) -> usize {
-        let mut size = HEADER_MIN_LENGTH;
-
-        if let Some(_) = self.content_size {
-            size += 8
-        };
-
-        if let Some(_) = self.dictionary_id {
-            size += 4
-        }
-
-        size
-    }
-
     // temporary return
     pub fn write(&self) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
@@ -131,37 +117,34 @@ impl FrameHeader {
         out
     }
 
-    pub fn read(mut input: &[u8]) -> FrameHeader {
-        let original_input = input;
-
+    pub fn read<R: Read>(input: &mut BufReader<R>) -> Result<FrameHeader, Error> {
         let magic_num = {
             let mut buf = [0u8; 4];
-            input.read_exact(&mut buf).unwrap();
+            input.read_exact(&mut buf)?;
             u32::from_le_bytes(buf)
         };
 
-
         // should handle legacy
         if magic_num != MAGIC_NUMBER {
-            panic!("INCORRECT MAGIC NUMBER")
+            return Err(Error::WrongMagicNumber);
         };
 
         let [flg, bd] = {
             let mut buf = [0u8; 2];
-            input.read_exact(&mut buf).unwrap();
+            input.read_exact(&mut buf)?;
             buf
         };
 
         if flg & VERSION_MASK != SUPPORTED_VERSION_MASK {
-            panic!("WRONG VERSION BITS")
+            return Err(Error::WrongVersion(flg & VERSION_MASK));
         }
 
         if flg & FLAG_RESERVED_MASK != 0 {
-            panic!("FLAG RESERVED BIT SET")
+            return Err(Error::FlagReservedBitsSet);
         }
 
         if bd & BD_RESERVED_MASK != 0 {
-            panic!("BD RESERVED BIT SET")
+            return Err(Error::BDReseverBitsSet);
         }
 
         let block_independance = flg & BLOCK_INDEPENDANCE_MASK != 0;
@@ -171,7 +154,7 @@ impl FrameHeader {
         let dictionary_id_flag = flg & DICT_ID_MASK != 0;
 
         let maximum_size = match (bd & BLOCK_MAXIMUM_SIZE_MASK) >> BLOCK_MAXIMUM_SIZE_BITSHIFT {
-            0..=3 => panic!("UNDIFINED BLOCK_MAXIMUM_SIZE VALUE"),
+            i @ 0..=3 => return Err(Error::UndefinedBlockMaximumSize(i)),
             4 => MaximumSize::KB64,
             5 => MaximumSize::KB256,
             6 => MaximumSize::MB1,
@@ -179,9 +162,12 @@ impl FrameHeader {
             _ => panic!("NO IDEA WHAT HAPPENED HERE")
         };
 
+        let mut to_hash = vec![flg, bd];
+
         let content_size = if content_size_flag {
             let mut buf = [0u8; 8];
-            input.read_exact(&mut buf).unwrap();
+            input.read_exact(&mut buf)?;
+            to_hash.extend_from_slice(&buf);
             Some(u64::from_le_bytes(buf))
         } else {
             None
@@ -189,7 +175,8 @@ impl FrameHeader {
 
         let dictionary_id = if dictionary_id_flag {
             let mut buf = [0u8; 4];
-            input.read_exact(&mut buf).unwrap();
+            input.read_exact(&mut buf)?;
+            to_hash.extend_from_slice(&buf);
             Some(u32::from_le_bytes(buf))
         } else {
             None
@@ -197,37 +184,23 @@ impl FrameHeader {
 
         let hc = {
             let mut buf = [0u8; 1];
-            input.read_exact(&mut buf).unwrap();
+            input.read_exact(&mut buf)?;
             buf[0]
         };
 
-        let hash = (XxHash32::oneshot(0, &original_input[4..original_input.len() - input.len() - 1]) >> 8) as u8;
+        let hash = (XxHash32::oneshot(0, &to_hash) >> 8) as u8;
 
         if hash != hc {
-            panic!("INCORRECT HEADER HASHCODE")
+            return Err(Error::WrongHeaderChecksum);
         }
 
-        FrameHeader {
+        Ok(FrameHeader {
             block_independance,
             block_checksum,
             content_size,
             content_checksum,
             dictionary_id,
             maximum_size
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn random() {
-        let tohash = [0b01111101, 0b01110000, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-        let test = [0x04u8, 0x22, 0x4D, 0x18, 0b01111101, 0b01110000, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, (XxHash32::oneshot(0, &tohash) >> 8) as u8];
-        FrameHeader::read(&test);
-        assert!(false);
+        })
     }
 }
