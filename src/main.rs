@@ -1,4 +1,4 @@
-use std::{fs::File, io::{BufReader, BufWriter, Write}};
+use std::{fs::{self, File}, io::{BufReader, BufWriter, Write}, time::Instant};
 use clap::Parser;
 
 use crate::frame::{FrameHeader, MaximumSize, compress_frame, decompress_frame};
@@ -49,12 +49,23 @@ fn main() {
         let mut out = BufWriter::new(File::create(name).unwrap());
         let mut input = BufReader::new(input_stream);
         
+        let start = Instant::now();
         match decompress_frame(&mut input, &mut out) {
-            Ok(_) => (),
-            Err(e) => panic!("{e:?}")
+            Ok(_) => {
+                out.flush().unwrap();
+                let elapsed = start.elapsed();
+                let input_size = fs::metadata(path).unwrap().len();
+                let output_size = fs::metadata(&name).unwrap().len();
+                let percentage = (output_size as f64 / input_size as f64) * 100.;
+                let throughput = input_size as f64 / elapsed.as_secs_f64() / 1000000.0;
+                println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
+            },
+            Err(e) => {
+                eprintln!("Error: {e:?}");
+                std::process::exit(1);
+            }
         }
 
-        out.flush().unwrap();
         drop(out);
     } else {
         let header = FrameHeader {
@@ -76,12 +87,23 @@ fn main() {
         let mut out = BufWriter::new(File::create(&name).unwrap());
         let mut input = BufReader::with_capacity(header.maximum_size.get_bytes(), input_stream);
 
+        let start = Instant::now();
         match compress_frame(&mut input, &mut out, header) {
-            Ok(_) => (),
-            Err(e) => panic!("{e:?}")
+            Ok(_) => {
+                out.flush().unwrap();
+                let elapsed = start.elapsed();
+                let input_size = fs::metadata(path).unwrap().len();
+                let output_size = fs::metadata(&name).unwrap().len();
+                let percentage = (output_size as f64 / input_size as f64) * 100.;
+                let throughput = input_size as f64 / elapsed.as_secs_f64() / 1000000.0;
+                println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
+            },
+            Err(e) => {
+                eprintln!("Error: {e:?}");
+                std::process::exit(1);
+            }
         }
 
-        out.flush().unwrap();
         drop(out);
     }
 }
