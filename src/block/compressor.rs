@@ -27,11 +27,10 @@ fn write_extra(mut extra: usize, out: &mut [u8], out_i: &mut usize) {
     *out_i += 1;
 }
 
-pub fn compress_block(block: &[u8], out: &mut [u8]) -> usize {
+pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZE]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;
 
-    let mut table = [0u32; WINDOW_SIZE];
     let mut sequences: Vec<SequenceMeta> = Vec::with_capacity(block.len() / MIN_MATCHLENGTH);
     let mut lit_start_pos: usize = 0;
 
@@ -79,7 +78,7 @@ pub fn compress_block(block: &[u8], out: &mut [u8]) -> usize {
     });
     
     // write sequences directly into out
-    for sequence in sequences {
+    for sequence in &sequences {
         let is_last = sequence.offset == 0;
 
         let lit_nibble = sequence.literals_count.min(TOKEN_UPPERBOUND) as u8;
@@ -122,7 +121,8 @@ mod tests {
 
     fn compress_block_to_vec(block: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; block.len() * 2];
-        let written = compress_block(block, &mut out);
+        let mut table = Box::new([0u32; WINDOW_SIZE]);
+        let written = compress_block(block, &mut out, &mut table);
         out.truncate(written);
         out
     }

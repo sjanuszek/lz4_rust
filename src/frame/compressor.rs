@@ -4,11 +4,13 @@ use twox_hash::XxHash32;
 
 use crate::{block::compress_block, frame::{DATA_TYPE_FLAG, END_MARK, Error, header::FrameHeader}};
 
-// should return Result
+const WINDOW_SIZE: usize = 64 * 1024;
+
 pub fn compress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut BufWriter<W>, header: FrameHeader) -> Result<(), Error> {
     let mut hasher = XxHash32::with_seed(0);
     let mut read_buf = vec![0u8; header.maximum_size.get_bytes()];
     let mut buf_compressed = vec![0u8; header.maximum_size.get_bytes() * 2];
+    let mut table = Box::new([0u32; WINDOW_SIZE]);
 
     out.write_all(&header.write())?;
 
@@ -21,7 +23,8 @@ pub fn compress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut Buf
             hasher.write(buf);
         }
 
-        let written = compress_block(buf, &mut buf_compressed);
+        table.fill(0);
+        let written = compress_block(buf, &mut buf_compressed, &mut table);
 
         if written > header.maximum_size.get_bytes() {
             let raw_size = (n as u32) | DATA_TYPE_FLAG;
