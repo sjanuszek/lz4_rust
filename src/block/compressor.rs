@@ -5,13 +5,6 @@ const WINDOW_SIZE: usize = 64 * 1024;
 const LAST_SEQUENCE_LENGTH: usize = 5;
 const PENULTIMATE_SEQUENCE_LENGTH: usize = 12;
 
-struct SequenceMeta {
-    start_pos: usize,
-    literals_count: usize,
-    matchlength: usize,
-    offset: u16
-}
-
 fn hash_4(sequence: u32) -> u32 {
     (sequence.wrapping_mul(2654435761u32)) >> 16
 }
@@ -27,14 +20,46 @@ fn write_extra(mut extra: usize, out: &mut [u8], out_i: &mut usize) {
     *out_i += 1;
 }
 
+fn write_sequence(block: &[u8], out: &mut [u8], out_i: &mut usize, start_pos: usize, literals_count: usize, offset: u16, matchlength: usize) {
+    let is_last = offset == 0;
+
+    let lit_nibble = literals_count.min(TOKEN_UPPERBOUND) as u8;
+    let mat_nibble = if is_last {
+        0u8
+    } else {
+        (matchlength - MIN_MATCHLENGTH).min(TOKEN_UPPERBOUND) as u8
+    };
+
+    out[*out_i] = (lit_nibble << 4) | (mat_nibble);
+    *out_i += 1;
+
+    if literals_count >= TOKEN_UPPERBOUND {
+        write_extra(literals_count - TOKEN_UPPERBOUND, out, out_i);
+    }
+
+    out[*out_i..*out_i + literals_count].copy_from_slice(&block[start_pos..start_pos + literals_count]);
+    *out_i += literals_count;
+
+    if is_last { return; }
+
+    let [low, high] = offset.to_le_bytes();
+
+    out[*out_i] = low;
+    out[*out_i + 1] = high;
+    *out_i += 2;
+
+    if matchlength - MIN_MATCHLENGTH >= TOKEN_UPPERBOUND {
+        write_extra(matchlength - MIN_MATCHLENGTH - TOKEN_UPPERBOUND, out, out_i);
+    }
+
+}
+
 pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZE]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;
 
-    let mut sequences: Vec<SequenceMeta> = Vec::with_capacity(block.len() / MIN_MATCHLENGTH);
     let mut lit_start_pos: usize = 0;
 
-    // create small sequence meta structs instead of holding a buffor of literals
     // ensure we meet the end of block conditions
     while i < block.len().saturating_sub(PENULTIMATE_SEQUENCE_LENGTH) {
         let byte_sequence = u32::from_le_bytes(block[i..i+MIN_MATCHLENGTH].try_into().unwrap());
@@ -55,12 +80,8 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
             }
 
             let offset: u16 = (i - j).try_into().unwrap();
-            sequences.push(SequenceMeta {
-                start_pos: lit_start_pos,
-                literals_count: i - lit_start_pos,
-                offset,
-                matchlength
-            });
+
+            write_sequence(block, out, &mut out_i, lit_start_pos, i - lit_start_pos, offset, matchlength);
 
             i += matchlength;
             lit_start_pos = i;
@@ -70,46 +91,7 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
     }
 
     // last sequence is pure literals
-    sequences.push(SequenceMeta {
-        start_pos: lit_start_pos,
-        literals_count: block.len() - lit_start_pos,
-        offset: 0,
-        matchlength: 0
-    });
-    
-    // write sequences directly into out
-    for sequence in &sequences {
-        let is_last = sequence.offset == 0;
-
-        let lit_nibble = sequence.literals_count.min(TOKEN_UPPERBOUND) as u8;
-        let mat_nibble = if is_last {
-            0u8
-        } else {
-            (sequence.matchlength - MIN_MATCHLENGTH).min(TOKEN_UPPERBOUND) as u8
-        };
-
-        out[out_i] = (lit_nibble << 4) | (mat_nibble);
-        out_i += 1;
-
-        if sequence.literals_count >= TOKEN_UPPERBOUND {
-            write_extra(sequence.literals_count - TOKEN_UPPERBOUND, out, &mut out_i);
-        }
-
-        out[out_i..out_i + sequence.literals_count].copy_from_slice(&block[sequence.start_pos..sequence.start_pos + sequence.literals_count]);
-        out_i += sequence.literals_count;
-
-        if is_last { break; }
-
-        let [low, high] = sequence.offset.to_le_bytes();
-
-        out[out_i] = low;
-        out[out_i + 1] = high;
-        out_i += 2;
-
-        if sequence.matchlength - MIN_MATCHLENGTH >= TOKEN_UPPERBOUND {
-            write_extra(sequence.matchlength - MIN_MATCHLENGTH - TOKEN_UPPERBOUND, out, &mut out_i);
-        }
-    }
+    write_sequence(block, out, &mut out_i, lit_start_pos, block.len() - lit_start_pos, 0, 0);
 
     out_i
 }

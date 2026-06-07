@@ -23,7 +23,6 @@ pub fn compress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut Buf
             hasher.write(buf);
         }
 
-        table.fill(0);
         let written = compress_block(buf, &mut buf_compressed, &mut table);
 
         if written > header.maximum_size.get_bytes() {
