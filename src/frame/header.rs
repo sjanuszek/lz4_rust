@@ -66,10 +66,7 @@ pub struct FrameHeader {
     pub maximum_size: MaximumSize,
 }
 
-// all unwraps need to be replaced with ?
-// should return errors, change all panics
 impl FrameHeader {
-    // temporary return
     pub fn write(&self) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::new();
 
