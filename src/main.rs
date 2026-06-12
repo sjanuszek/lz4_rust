@@ -50,10 +50,11 @@ fn main() {
         let mut input = BufReader::new(input_stream);
         
         let start = Instant::now();
-        match decompress_frame(&mut input, &mut out) {
+        let res = decompress_frame(&mut input, &mut out);
+        let elapsed = start.elapsed();
+        match res {
             Ok(_) => {
                 out.flush().unwrap();
-                let elapsed = start.elapsed();
                 let input_size = fs::metadata(path).unwrap().len();
                 let output_size = fs::metadata(&name).unwrap().len();
                 let percentage = (output_size as f64 / input_size as f64) * 100.;
@@ -88,10 +89,11 @@ fn main() {
         let mut input = BufReader::with_capacity(header.maximum_size.get_bytes(), input_stream);
 
         let start = Instant::now();
-        match compress_frame(&mut input, &mut out, header) {
+        let res = compress_frame(&mut input, &mut out, header);
+        let elapsed = start.elapsed();
+        match res {
             Ok(_) => {
                 out.flush().unwrap();
-                let elapsed = start.elapsed();
                 let input_size = fs::metadata(path).unwrap().len();
                 let output_size = fs::metadata(&name).unwrap().len();
                 let percentage = (output_size as f64 / input_size as f64) * 100.;
