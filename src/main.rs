@@ -7,31 +7,41 @@ mod block;
 mod frame;
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about = "lz4 file compression and decompression written in rust", long_about = None)]
 struct Cli {
+    /// Compress. This is the default operation mode when no operation mode parameter is provided
     #[arg(short, long, conflicts_with = "decompress")]
     compress: bool,
 
+    /// Decompress
     #[arg(short, long)]
     decompress: bool,
 
-    input: String,
+    input_file: String,
 
+    /// Produces independent blocks (default)
     #[arg(long = "BI", visible_alias = "block-independance", default_value_t = true)]
     block_independence: bool,
 
+    /// Generates block checksums (default:disabled)
     #[arg(long = "BC", visible_alias = "block-checksum", default_value_t = false)]
     block_checksum: bool,
 
+    /// Header includes original size (default:not present)
     #[arg(long = "CS", visible_alias = "content-size")]
     content_size: Option<u64>,
 
+    /// Generates content checksum (default:enabled)
     #[arg(long = "CC", visible_alias = "content-checksum", default_value_t = true)]
     content_checksum: bool,
 
+    /// Compress or decompress using dictionary set with dictionary id (not implemented)
     #[arg(long = "DI", visible_alias = "dictionary-id")]
     dictionary_id: Option<u32>,
 
+    /// Block size [4-7] 
+    ///-b 4 = 64KB ; -b 5 = 256KB ; -b 6 = 1MB ; -b 7 = 4MB
+    #[clap(verbatim_doc_comment)]
     #[arg(short, long = "block-size", default_value_t = 7, value_parser = clap::value_parser!(u8).range(4..=7))]
     block_size: u8
 }
@@ -40,7 +50,7 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    let path = &cli.input;
+    let path = &cli.input_file;
 
     let input_stream = File::open(path).unwrap();
 
