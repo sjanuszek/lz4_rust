@@ -65,12 +65,16 @@ pub fn decompress_block(block: &[u8], out: &mut [u8]) -> Result<usize, Error> {
 
         }
 
-        // match copy operation
         let match_pos = out_pos - offset as usize;
-        for i in 0..matchlength as usize {
-            out[out_pos + i] = out[match_pos + i];
+
+        if offset as usize >= matchlength {
+            out.copy_within(match_pos..match_pos + matchlength, out_pos);
+        } else {
+            for i in 0..matchlength {
+                out[out_pos + i] = out[match_pos + i];
+            }
         }
-        out_pos += matchlength as usize;
+        out_pos += matchlength;
 
         // we have already moved block_pos onto the next token
         (length, matchlength) = parse_token(block[block_pos]);
