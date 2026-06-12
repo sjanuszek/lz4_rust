@@ -6,7 +6,6 @@ use crate::{block::decompress_block, frame::{DATA_TYPE_FLAG, END_MARK, Error, he
 
 static BLOCK_SIZE_FLAG: u32 = 0x7FFFFFFF;
 
-// still need to handle block dependancy
 pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut BufWriter<W>) -> Result<(), Error> {
     let header = FrameHeader::read(input)?;
 
@@ -17,6 +16,9 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
     }
 
     let mut hasher = XxHash32::with_seed(0);
+
+    let mut block_buf = vec![0u8; header.maximum_size.get_bytes()];
+    let mut data_buf = vec![0u8; header.maximum_size.get_bytes()];
 
     loop {
         let mut raw_size_buf = [0u8; 4];
@@ -32,8 +34,8 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
             return Err(Error::WrongBlockSize { expected: header.maximum_size.get_bytes(), gotten: block_size });
         }
 
-        let mut block = vec![0u8; block_size];
-        input.read_exact(&mut block)?;
+        let block_slice = &mut block_buf[..block_size];
+        input.read_exact(block_slice)?;
 
         if header.block_checksum {
             let mut block_checksum_buf = [0u8; 4];
@@ -41,7 +43,7 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
 
             let block_checksum = u32::from_le_bytes(block_checksum_buf);
 
-            let hash = XxHash32::oneshot(0, &block) as u32;
+            let hash = XxHash32::oneshot(0, block_slice) as u32;
 
             if block_checksum != hash {
                 return Err(Error::WrongBlockChecksum);
@@ -50,20 +52,22 @@ pub fn decompress_frame<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut B
 
         if raw_size & DATA_TYPE_FLAG != 0 {
             if header.content_checksum {
-                hasher.write(&block);
+                hasher.write(block_slice);
             }
-            out.write_all(&block)?;
+            out.write_all(block_slice)?;
         } else {
-            let mut data_buf = vec![0u8; header.maximum_size.get_bytes()];
-            match decompress_block(&block, &mut data_buf) {
-                Ok(written) => data_buf.truncate(written),
+            match decompress_block(block_slice, &mut data_buf) {
+                Ok(written) => {
+                    let decompressed_slice = &data_buf[..written];
+
+                    if header.content_checksum {
+                        hasher.write(decompressed_slice);
+                    }
+                    out.write_all(decompressed_slice)?;
+                },
                 Err(e) => return Err(Error::BlockDecompressorError(e))
             }
 
-            if header.content_checksum {
-                hasher.write(&data_buf);
-            }
-            out.write_all(&data_buf)?;
         }
     }
 
