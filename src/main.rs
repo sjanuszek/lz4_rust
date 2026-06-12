@@ -62,7 +62,7 @@ fn main() {
                 println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
             },
             Err(e) => {
-                eprintln!("Error: {e:?}");
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
@@ -101,7 +101,7 @@ fn main() {
                 println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
             },
             Err(e) => {
-                eprintln!("Error: {e:?}");
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
