@@ -59,20 +59,27 @@ fn main() {
     let input_stream = File::open(path).unwrap();
 
     if cli.decompress{
+        let threads = rayon::current_num_threads();
+        let num_workers = if cli.jobs == 0 {
+            threads
+        } else {
+            cli.jobs.min(threads)
+        };
+
         let name = path.strip_suffix(".lz4").unwrap();
         let mut out = BufWriter::new(File::create(name).unwrap());
         let mut input = BufReader::new(input_stream);
         
         let start = Instant::now();
-        let res = decompress_frame(&mut input, &mut out);
+        let res = decompress_frame(&mut input, &mut out, num_workers);
         let elapsed = start.elapsed();
         match res {
             Ok(_) => {
                 out.flush().unwrap();
                 let input_size = fs::metadata(path).unwrap().len();
                 let output_size = fs::metadata(&name).unwrap().len();
-                let percentage = (output_size as f64 / input_size as f64) * 100.;
-                let throughput = input_size as f64 / elapsed.as_secs_f64() / 1000000.0;
+                let percentage = (input_size as f64 / output_size as f64) * 100.;
+                let throughput = output_size as f64 / elapsed.as_secs_f64() / 1000000.0;
                 println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
             },
             Err(e) => {
@@ -98,10 +105,11 @@ fn main() {
             },
         };
 
+        let threads = rayon::current_num_threads();
         let num_workers = if cli.jobs == 0 {
-            rayon::current_num_threads()
+            threads
         } else {
-            cli.jobs
+            cli.jobs.max(threads)
         };
 
         let name = format!("{}.lz4", path);
