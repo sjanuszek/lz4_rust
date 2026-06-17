@@ -1,6 +1,5 @@
 mod compressor;
 mod decompressor;
-mod hash;
 mod header;
 
 const END_MARK: [u8; 4] = [0,0,0,0];
