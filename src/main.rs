@@ -109,7 +109,7 @@ fn main() {
         let num_workers = if cli.jobs == 0 {
             threads
         } else {
-            cli.jobs.max(threads)
+            cli.jobs.min(threads)
         };
 
         let name = format!("{}.lz4", path);
