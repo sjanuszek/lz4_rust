@@ -19,6 +19,10 @@ struct Cli {
 
     input_file: String,
 
+    /// Number of threads to use for compression or decompression (minimum 3 due to pipeline architecture: reader + workers + writer)
+    #[arg(short, long = "jobs", default_value_t = 1)]
+    jobs: usize,
+
     /// Produces independent blocks (default)
     #[arg(long = "BI", visible_alias = "block-independance", default_value_t = true)]
     block_independence: bool,
@@ -94,12 +98,18 @@ fn main() {
             },
         };
 
+        let num_workers = if cli.jobs == 0 {
+            rayon::current_num_threads()
+        } else {
+            cli.jobs
+        };
+
         let name = format!("{}.lz4", path);
         let mut out = BufWriter::new(File::create(&name).unwrap());
         let mut input = BufReader::with_capacity(header.maximum_size.get_bytes(), input_stream);
 
         let start = Instant::now();
-        let res = compress_frame(&mut input, &mut out, header);
+        let res = compress_frame(&mut input, &mut out, header, num_workers);
         let elapsed = start.elapsed();
         match res {
             Ok(_) => {
