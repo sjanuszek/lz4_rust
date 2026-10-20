@@ -53,7 +53,7 @@ fn compress_frame_seq<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut Buf
             out.write_all(&buf_compressed[..written])?;
 
             if header.block_checksum {
-                let hash = XxHash32::oneshot(0, &buf_compressed) as u32;
+                let hash = XxHash32::oneshot(0, &buf_compressed[..written]) as u32;
                 out.write_all(&u32::to_le_bytes(hash))?;
             }
         }
