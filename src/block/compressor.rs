@@ -19,13 +19,10 @@ fn read_u32(buf: &[u8], pos: usize) -> u32 {
 }
 
 fn write_extra(mut extra: usize, out: &mut [u8], out_i: &mut usize) {
-    while extra >= 255 {
-        out[*out_i] = 255;
-        *out_i += 1;
-        extra -= 255
-    } 
-
-    out[*out_i] = extra as u8;
+    let n = extra / 255;
+    out[*out_i..*out_i + n].fill(255);
+    *out_i += n;
+    out[*out_i] = (extra % 255) as u8;
     *out_i += 1;
 }
 
@@ -46,7 +43,11 @@ fn write_sequence(block: &[u8], out: &mut [u8], out_i: &mut usize, start_pos: us
         write_extra(literals_count - TOKEN_UPPERBOUND, out, out_i);
     }
 
-    out[*out_i..*out_i + literals_count].copy_from_slice(&block[start_pos..start_pos + literals_count]);
+    if literals_count <= 16 && start_pos + 16 <= block.len() && *out_i + 16 <= out.len() {
+        out[*out_i..*out_i + 16].copy_from_slice(&block[start_pos..start_pos + 16]);
+    } else {
+        out[*out_i..*out_i + literals_count].copy_from_slice(&block[start_pos..start_pos + literals_count]);
+    }
     *out_i += literals_count;
 
     if is_last { return; }
