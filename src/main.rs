@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::{BufReader, BufWriter, Write}, time::Instant};
+use std::{fs::{self, File}, io::{self, BufReader, BufWriter, IsTerminal, Write}, time::Instant};
 use clap::Parser;
 
 use crate::frame::{FrameHeader, MaximumSize, compress_frame, decompress_frame};
@@ -10,7 +10,7 @@ mod frame;
 #[command(version, about = "lz4 file compression and decompression written in rust", long_about = None)]
 struct Cli {
     /// Compress. This is the default operation mode when no operation mode parameter is provided
-    #[arg(short, long, conflicts_with = "decompress")]
+    #[arg(short = 'z', long, conflicts_with = "decompress")]
     compress: bool,
 
     /// Decompress
@@ -18,6 +18,10 @@ struct Cli {
     decompress: bool,
 
     input_file: String,
+
+    /// Write result to stdout instead of a file (statistics go to stderr)
+    #[arg(short = 'c', long)]
+    stdout: bool,
 
     /// Number of threads to use for compression or decompression (minimum 3 due to pipeline architecture: reader + workers + writer)
     #[arg(short, long = "jobs", default_value_t = 1)]
@@ -50,45 +54,66 @@ struct Cli {
     block_size: u8
 }
 
+struct CountingWriter<W> {
+    inner: W,
+    count: u64,
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn open_stdout() -> io::Result<Box<dyn Write + Send>> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        let fd = io::stdout().as_fd().try_clone_to_owned()?;
+        Ok(Box::new(File::from(fd)))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(Box::new(io::stdout()))
+    }
+}
 
 fn main() {
     let cli = Cli::parse();
-
     let path = &cli.input_file;
-
     let input_stream = File::open(path).unwrap();
 
-    if cli.decompress{
-        let threads = rayon::current_num_threads();
-        let num_workers = if cli.jobs == 0 {
-            threads
-        } else {
-            cli.jobs.min(threads)
-        };
+    let threads = rayon::current_num_threads();
+    let num_workers = if cli.jobs == 0 { threads } else { cli.jobs.min(threads) };
 
-        let name = path.strip_suffix(".lz4").unwrap();
-        let mut out = BufWriter::new(File::create(name).unwrap());
-        let mut input = BufReader::new(input_stream);
-        
-        let start = Instant::now();
-        let res = decompress_frame(&mut input, &mut out, num_workers);
-        let elapsed = start.elapsed();
-        match res {
-            Ok(_) => {
-                out.flush().unwrap();
-                let input_size = fs::metadata(path).unwrap().len();
-                let output_size = fs::metadata(&name).unwrap().len();
-                let percentage = (input_size as f64 / output_size as f64) * 100.;
-                let throughput = output_size as f64 / elapsed.as_secs_f64() / 1000000.0;
-                println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
-            },
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
+    let (name, sink): (String, Box<dyn Write + Send>) = if cli.stdout {
+        if !cli.decompress && io::stdout().is_terminal() {
+            eprintln!("Error: refusing to write compressed data to a terminal");
+            std::process::exit(1);
         }
+        ("<stdout>".to_string(), open_stdout().unwrap())
+    } else {
+        let name = if cli.decompress {
+            path.strip_suffix(".lz4").unwrap().to_string()
+        } else {
+            format!("{}.lz4", path)
+        };
+        let file = File::create(&name).unwrap();
+        (name, Box::new(file))
+    };
 
-        drop(out);
+    let mut out = BufWriter::new(CountingWriter { inner: sink, count: 0 });
+    let input_size = fs::metadata(path).unwrap().len();
+
+    let start = Instant::now();
+    let res = if cli.decompress{
+        let mut input = BufReader::new(input_stream);
+        decompress_frame(&mut input, &mut out, num_workers)
     } else {
         let header = FrameHeader {
             block_independance: cli.block_independence,
@@ -105,35 +130,31 @@ fn main() {
             },
         };
 
-        let threads = rayon::current_num_threads();
-        let num_workers = if cli.jobs == 0 {
-            threads
-        } else {
-            cli.jobs.min(threads)
-        };
-
-        let name = format!("{}.lz4", path);
-        let mut out = BufWriter::new(File::create(&name).unwrap());
         let mut input = BufReader::with_capacity(header.maximum_size.get_bytes(), input_stream);
+        compress_frame(&mut input, &mut out, header, num_workers)
+    };
+    let elapsed = start.elapsed();
 
-        let start = Instant::now();
-        let res = compress_frame(&mut input, &mut out, header, num_workers);
-        let elapsed = start.elapsed();
-        match res {
-            Ok(_) => {
-                out.flush().unwrap();
-                let input_size = fs::metadata(path).unwrap().len();
-                let output_size = fs::metadata(&name).unwrap().len();
-                let percentage = (output_size as f64 / input_size as f64) * 100.;
-                let throughput = input_size as f64 / elapsed.as_secs_f64() / 1000000.0;
-                println!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
-            },
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
+    match res {
+        Ok(()) => {
+            out.flush().unwrap();
+            let output_size = out.get_ref().count;
+
+            let (big, small) = if cli.decompress {
+                (output_size, input_size)
+            } else {
+                (input_size, output_size)
+            };
+
+            let percentage = small as f64 / big as f64 * 100.;
+            let throughput = big as f64 / elapsed.as_secs_f64() / 1000000.0;
+            let line = format!("{} => {} ({} bytes => {} bytes, {:.2}%) in {:.2?} ({:.1} MB/s)",path, name, input_size, output_size, percentage, elapsed, throughput);
+            if cli.stdout { eprintln!("{line}"); } else { println!("{line}"); }
+        },
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
-
-        drop(out);
     }
+
 }
