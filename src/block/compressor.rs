@@ -54,6 +54,23 @@ fn write_sequence(block: &[u8], out: &mut [u8], out_i: &mut usize, start_pos: us
 
 }
 
+fn count_match(a: &[u8], b: &[u8]) -> usize {
+    let limit = a.len().min(b.len());
+    let mut n = 0;
+
+    while n + 8 <= limit {
+        let x = u64::from_le_bytes(a[n..n + 8].try_into().unwrap());
+        let y = u64::from_le_bytes(b[n..n + 8].try_into().unwrap());
+        let diff = x ^ y;
+        if diff != 0 {
+            return n + (diff.trailing_zeros() / 8) as usize;
+        }
+        n += 8;
+    }
+    while n < limit && a[n] == b[n] { n += 1; }
+    n
+}
+
 pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZE]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;
@@ -73,11 +90,8 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
         table[hash] = i as u32;
 
         if is_valid_match {
-            let mut matchlength = MIN_MATCHLENGTH;
-
-            while i + matchlength < block.len() - LAST_SEQUENCE_LENGTH && j + matchlength < block.len() && block[i + matchlength] == block[j + matchlength] {
-                matchlength += 1
-            }
+            let end = block.len() - LAST_SEQUENCE_LENGTH;
+            let matchlength = MIN_MATCHLENGTH + count_match(&block[i + MIN_MATCHLENGTH..end], &block[j + MIN_MATCHLENGTH..]);
 
             let offset: u16 = (i - j).try_into().unwrap();
 
