@@ -3,9 +3,7 @@ use std::{hash::Hasher, io::{BufRead, BufReader, BufWriter, Read, Write}};
 use crossbeam_channel::bounded;
 use twox_hash::XxHash32;
 
-use crate::{block::compress_block, frame::{DATA_TYPE_FLAG, END_MARK, Error, header::FrameHeader}};
-
-const WINDOW_SIZE: usize = 64 * 1024;
+use crate::{block::{HASH_TABLE_SIZE, compress_block}, frame::{DATA_TYPE_FLAG, END_MARK, Error, header::FrameHeader}};
 
 pub fn compress_frame<R: Read + Send, W: Write + Send>(input: &mut BufReader<R>, out: &mut BufWriter<W>, header: FrameHeader, num_workers: usize) -> Result<(), Error> {
     match num_workers {
@@ -23,7 +21,7 @@ fn compress_frame_seq<R: Read, W: Write>(input: &mut BufReader<R>, out: &mut Buf
     let mut hasher = XxHash32::with_seed(0);
     let mut read_buf = vec![0u8; header.maximum_size.get_bytes()];
     let mut buf_compressed = vec![0u8; header.maximum_size.get_bytes() * 2];
-    let mut table = Box::new([0u32; WINDOW_SIZE]);
+    let mut table = Box::new([0u32; HASH_TABLE_SIZE]);
 
     out.write_all(&header.write())?;
 
@@ -99,7 +97,7 @@ fn compress_frame_par<R: Read + Send, W: Write + Send>(input: &mut BufReader<R>,
         for _ in 0..num_workers {
             let raw_rx = raw_rx.clone();
             let comp_tx = comp_tx.clone();
-            let mut table = Box::new([0u32; WINDOW_SIZE]);
+            let mut table = Box::new([0u32; HASH_TABLE_SIZE]);
             let mut buf_compressed = vec![0u8; max_size * 2];
             s.spawn(move |_| {
                 while let Ok((index, block)) = raw_rx.recv() {

@@ -5,8 +5,17 @@ const WINDOW_SIZE: usize = 64 * 1024;
 const LAST_SEQUENCE_LENGTH: usize = 5;
 const PENULTIMATE_SEQUENCE_LENGTH: usize = 12;
 
-fn hash_4(sequence: u32) -> u32 {
-    (sequence.wrapping_mul(2654435761u32)) >> 16
+const HASH_LOG: u32 = 12;
+pub const HASH_TABLE_SIZE: usize = 1 << HASH_LOG;
+
+#[inline(always)]
+fn hash_4(sequence: u32) -> usize {
+    ((sequence.wrapping_mul(2654435761u32)) >> (32 - HASH_LOG)) as usize
+}
+
+#[inline(always)]
+fn read_u32(buf: &[u8], pos: usize) -> u32 {
+    u32::from_le_bytes(buf[pos..pos + MIN_MATCHLENGTH].try_into().unwrap())
 }
 
 fn write_extra(mut extra: usize, out: &mut [u8], out_i: &mut usize) {
@@ -54,8 +63,10 @@ fn write_sequence(block: &[u8], out: &mut [u8], out_i: &mut usize, start_pos: us
 
 }
 
+#[inline(always)]
 fn count_match(a: &[u8], b: &[u8]) -> usize {
     let limit = a.len().min(b.len());
+    let (a, b) = (&a[..limit], &b[..limit]);
     let mut n = 0;
 
     while n + 8 <= limit {
@@ -71,7 +82,7 @@ fn count_match(a: &[u8], b: &[u8]) -> usize {
     n
 }
 
-pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZE]) -> usize {
+pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; HASH_TABLE_SIZE]) -> usize {
     let mut i: usize = 0;
     let mut out_i: usize = 0;
 
@@ -80,17 +91,13 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
     let mut misses: usize =  0;
     // ensure we meet the end of block conditions
     while i < block.len().saturating_sub(PENULTIMATE_SEQUENCE_LENGTH) {
-        let byte_sequence = u32::from_le_bytes(block[i..i+MIN_MATCHLENGTH].try_into().unwrap());
-        let hash = hash_4(byte_sequence) as usize;
+        let byte_sequence = read_u32(block, i);
+        let hash = hash_4(byte_sequence);
         let j = table[hash] as usize;
-
-        let is_valid_match = j < i
-            && i - j < WINDOW_SIZE
-            && block[i..i+MIN_MATCHLENGTH] == block[j..j+MIN_MATCHLENGTH];
 
         table[hash] = i as u32;
 
-        if is_valid_match {
+        if j < i && i - j < WINDOW_SIZE && read_u32(block, j) == byte_sequence {
             misses = 0;
 
             let end = block.len() - LAST_SEQUENCE_LENGTH;
@@ -121,7 +128,7 @@ mod tests {
 
     fn compress_block_to_vec(block: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; block.len() * 2];
-        let mut table = Box::new([0u32; WINDOW_SIZE]);
+        let mut table = Box::new([0u32; HASH_TABLE_SIZE]);
         let written = compress_block(block, &mut out, &mut table);
         out.truncate(written);
         out

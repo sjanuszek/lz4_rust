@@ -8,6 +8,7 @@ use core::fmt;
 
 pub use compressor::compress_block;
 pub use decompressor::decompress_block;
+pub use compressor::HASH_TABLE_SIZE;
 
 #[derive(Debug)]
 pub enum Error {
