@@ -18,6 +18,23 @@ cargo run --release -- -j 4 --block-size 6 <file>    # Use parallel processing a
 
 Block sizes: `4` = 64 KB, `5` = 256 KB, `6` = 1 MB, `7` = 4 MB. Content checksums are enabled by default. Use `--BC` to enable block checksums and `--CS <bytes>` to include the original content size. Compression is the default mode.
 
+## Parameters
+
+| Option | Description | Default / behavior |
+|---|---|---|
+| `<input-file>` | Required input file path. | Required. |
+| `-c`, `--compress` | Select compression mode. | Compression is already the default. Conflicts with `-d`. |
+| `-d`, `--decompress` | Decompress an LZ4 frame. | Disabled. |
+| `-j`, `--jobs <N>` | Requested worker/thread count. | `1`. `0` uses Rayon’s current thread count; positive values are capped at that count. An effective count of 1–2 uses the sequential path; more than 2 uses the parallel path. |
+| `-b`, `--block-size <4-7>` | Maximum uncompressed block size for compression. | `7` (4 MB). `4` = 64 KB, `5` = 256 KB, `6` = 1 MB, `7` = 4 MB. |
+| `--BI`, `--block-independance` | Use independent blocks. The long alias is spelled this way in the current CLI. | Enabled by default. Block-dependent frames are not supported by the decoder. |
+| `--BC`, `--block-checksum` | Include a checksum for each block. | Disabled. |
+| `--CS <BYTES>`, `--content-size <BYTES>` | Store the original uncompressed size in the frame header. | Omitted. The value is supplied manually; it is not calculated from the input file or checked against the actual size. |
+| `--CC`, `--content-checksum` | Include a checksum for the uncompressed content. | Enabled by default |
+| `--DI <ID>`, `--dictionary-id <ID>` | Dictionary ID option. | Not implemented; the CLI does not use this value, and dictionary-based frames are unsupported. |
+| `-h`, `--help` | Show CLI help. | Built in. |
+| `-V`, `--version` | Show program version. | Built in. |
+
 ## Benchmark
 Benchmark performed against the refrenece `lz4` implementation on the Silesia corpus using [Hyperfine](https://github.com/sharkdp/hyperfine).
 | File | Rust time (ms) | Reference `lz4` time (ms) | Runtime vs. reference | Rust peak memory (MiB) | Reference `lz4` peak memory (MiB) | Memory vs. reference |
