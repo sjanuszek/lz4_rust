@@ -77,6 +77,7 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
 
     let mut lit_start_pos: usize = 0;
 
+    let mut misses: usize =  0;
     // ensure we meet the end of block conditions
     while i < block.len().saturating_sub(PENULTIMATE_SEQUENCE_LENGTH) {
         let byte_sequence = u32::from_le_bytes(block[i..i+MIN_MATCHLENGTH].try_into().unwrap());
@@ -90,6 +91,8 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
         table[hash] = i as u32;
 
         if is_valid_match {
+            misses = 0;
+
             let end = block.len() - LAST_SEQUENCE_LENGTH;
             let matchlength = MIN_MATCHLENGTH + count_match(&block[i + MIN_MATCHLENGTH..end], &block[j + MIN_MATCHLENGTH..]);
 
@@ -100,7 +103,8 @@ pub fn compress_block(block: &[u8], out: &mut [u8], table: &mut [u32; WINDOW_SIZ
             i += matchlength;
             lit_start_pos = i;
         } else {
-            i += 1;
+            i += 1 + (misses >> 6);
+            misses += 1;
         }
     }
 
